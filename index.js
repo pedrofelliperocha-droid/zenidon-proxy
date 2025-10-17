@@ -25,7 +25,7 @@ function onlyDigits(s) {
 }
 
 // ------------------------------
-// Endpoint principal: /sheets/fullscan
+// Endpoint principal
 // ------------------------------
 app.get("/sheets/fullscan", async (req, res) => {
   const { id, query, debug } = req.query;
@@ -34,7 +34,7 @@ app.get("/sheets/fullscan", async (req, res) => {
   }
 
   try {
-    // 1️⃣ Buscar metadados da planilha (abas)
+    // 1️⃣ Buscar abas
     const metaRes = await fetch(`${SHEETS_BASE_URL}/${id}?key=${GOOGLE_API_KEY}`, {
       headers: { Accept: "application/json" },
     });
@@ -52,7 +52,7 @@ app.get("/sheets/fullscan", async (req, res) => {
     const results = [];
     const debugInfo = [];
 
-    // 3️⃣ Percorrer todas as abas
+    // 3️⃣ Percorrer abas
     for (const sheet of metaData.sheets) {
       const title = sheet.properties.title;
       const range = `${encodeURIComponent(title)}!A1:Z${MAX_ROWS}`;
@@ -70,18 +70,23 @@ app.get("/sheets/fullscan", async (req, res) => {
       // 4️⃣ Filtro principal
       const matches = rows.filter((row) =>
         row.some((cell) => {
-          const cellRaw = cell ?? "";
+          const cellRaw = String(cell ?? "").trim();
 
           if (isNumeric) {
             const digits = onlyDigits(cellRaw);
             if (!digits || digits.length < 6) return false;
-            if (!numericQuery || numericQuery.length < 6) return false;
 
-            return (
-              digits === numericQuery ||
-              digits.endsWith(numericQuery) ||
-              numericQuery.endsWith(digits)
-            );
+            // CPF (11 dígitos) ou CNS (15 dígitos)
+            const isCPF = digits.length === 11;
+            const isCNS = digits.length === 15;
+            const qIsCPF = numericQuery.length === 11;
+            const qIsCNS = numericQuery.length === 15;
+
+            if (isCPF && qIsCPF) return digits === numericQuery;
+            if (isCNS && qIsCNS) return digits === numericQuery;
+
+            // Permite busca parcial caso o termo seja menor
+            return digits.endsWith(numericQuery) || numericQuery.endsWith(digits);
           } else {
             return normalizeText(cellRaw).includes(textQuery);
           }
@@ -92,7 +97,6 @@ app.get("/sheets/fullscan", async (req, res) => {
         results.push({ title, rows: rows.length, headers, matches });
       }
 
-      // info de debug
       if (debug) {
         debugInfo.push({
           title,
@@ -102,38 +106,18 @@ app.get("/sheets/fullscan", async (req, res) => {
       }
     }
 
-    // 5️⃣ Montar resposta final
     const payload = {
       spreadsheetId: id,
       totalSheets: results.length,
       sheets: results,
     };
 
-    // 6️⃣ Se debug=1 → mostra apenas estatísticas
-    if (debug == 1) payload.debug = debugInfo;
-
-    // 7️⃣ Se debug=2 → inclui prévia de dados reais da planilha
-    if (debug == 2) {
-      const sampleSheet = metaData.sheets[0]?.properties?.title;
-      if (sampleSheet) {
-        const sampleRange = `${encodeURIComponent(sampleSheet)}!A1:Z5`;
-        const sampleRes = await fetch(
-          `${SHEETS_BASE_URL}/${id}/values/${sampleRange}?key=${GOOGLE_API_KEY}`,
-          { headers: { Accept: "application/json" } }
-        );
-        const sampleJson = await sampleRes.json();
-        payload.debug = debugInfo;
-        payload.samplePreview = {
-          sheet: sampleSheet,
-          linhas: sampleJson.values || [],
-        };
-      }
-    }
+    if (debug) payload.debug = debugInfo;
 
     res.json(payload);
   } catch (err) {
     console.error("❌ Erro no fullscan:", err);
-    res.status(500).json({ error: "Erro interno no Zenidon Proxy", details: err.message });
+    res.status(500).json({ error: "Erro interno", details: err.message });
   }
 });
 
@@ -141,10 +125,10 @@ app.get("/sheets/fullscan", async (req, res) => {
 // Endpoint raiz
 // ------------------------------
 app.get("/", (req, res) => {
-  res.send("✅ Zenidon Proxy v3.6-debug-inspect rodando e pronto para diagnóstico");
+  res.send("✅ Zenidon Proxy v3.7-stable-match rodando com reconhecimento de CPF e CNS");
 });
 
 // ------------------------------
-// Inicialização do servidor
+// Inicialização
 // ------------------------------
-app.listen(PORT, () => console.log("🚀 Zenidon Proxy v3.6-debug-inspect rodando na porta", PORT));
+app.listen(PORT, () => console.log("🚀 Zenidon Proxy v3.7-stable-match rodando na porta", PORT));
