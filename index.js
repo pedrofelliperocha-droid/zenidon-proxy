@@ -8,6 +8,9 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const SHEETS_BASE_URL = "https://sheets.googleapis.com/v4/spreadsheets";
 const MAX_ROWS = 1000;
 
+// ------------------------------
+// Funções auxiliares
+// ------------------------------
 function normalizeText(s) {
   return String(s || "")
     .toUpperCase()
@@ -21,6 +24,9 @@ function onlyDigits(s) {
   return String(s || "").replace(/\D/g, "");
 }
 
+// ------------------------------
+// Endpoint principal
+// ------------------------------
 app.get("/sheets/fullscan", async (req, res) => {
   const { id, query, debug } = req.query;
   if (!id || !query) {
@@ -55,16 +61,29 @@ app.get("/sheets/fullscan", async (req, res) => {
       const dataJson = await dataRes.json();
       if (!dataJson.values) continue;
 
-      const headers = dataJson.values[0];
+      const headers = dataJson.values[0] || [];
       const rows = dataJson.values.slice(1);
 
+      // 1️⃣ Filtro principal
       const matches = rows.filter((row) =>
         row.some((cell) => {
           const cellRaw = String(cell ?? "").trim();
+
           if (isNumeric) {
             const digits = onlyDigits(cellRaw);
             if (!digits || digits.length < 6) return false;
-            return digits === numericQuery;
+
+            // CPF = 11 dígitos | CNS = 15 dígitos
+            const isCPF = digits.length === 11;
+            const isCNS = digits.length === 15;
+            const qIsCPF = numericQuery.length === 11;
+            const qIsCNS = numericQuery.length === 15;
+
+            if ((isCPF && qIsCPF) || (isCNS && qIsCNS)) {
+              return digits === numericQuery;
+            }
+            // Busca parcial
+            return digits.endsWith(numericQuery) || numericQuery.endsWith(digits);
           } else {
             return normalizeText(cellRaw).includes(textQuery);
           }
@@ -81,11 +100,23 @@ app.get("/sheets/fullscan", async (req, res) => {
         });
       }
 
+      // 2️⃣ Captura de amostra das colunas de CPF/CNS
       if (debug == 3) {
-        const cpfIndex = headers.findIndex((h) => normalizeText(h).includes("CPF"));
-        if (cpfIndex >= 0) {
-          const sample = rows.slice(0, 10).map((r) => r[cpfIndex] ?? "");
-          traceInfo.push({ title, coluna: headers[cpfIndex], amostra: sample });
+        const headerMatches = headers
+          .map((h, idx) => ({ idx, name: normalizeText(h) }))
+          .filter((h) =>
+            ["CPF", "CNS", "CPF/CNS", "CPF CNS", "DOCUMENTO"].some((kw) =>
+              h.name.includes(normalizeText(kw))
+            )
+          );
+
+        for (const h of headerMatches) {
+          const sample = rows.slice(0, 10).map((r) => String(r[h.idx] ?? "").trim());
+          traceInfo.push({
+            title,
+            coluna: headers[h.idx],
+            amostra: sample,
+          });
         }
       }
     }
@@ -101,12 +132,13 @@ app.get("/sheets/fullscan", async (req, res) => {
 
     res.json(payload);
   } catch (err) {
+    console.error("❌ Erro:", err);
     res.status(500).json({ error: "Erro interno", details: err.message });
   }
 });
 
 app.get("/", (req, res) => {
-  res.send("✅ Zenidon Proxy v3.8-trace-cpf-cns rodando");
+  res.send("✅ Zenidon Proxy v3.9-autoformat ativo — pronto para diagnóstico de CPF/CNS");
 });
 
-app.listen(PORT, () => console.log("🚀 Zenidon Proxy v3.8-trace-cpf-cns rodando na porta", PORT));
+app.listen(PORT, () => console.log("🚀 Zenidon Proxy v3.9-autoformat rodando na porta", PORT));
