@@ -1,67 +1,65 @@
+// Zenidon Proxy – Fullscan (versão completa)
+// Executa leitura dinâmica de TODAS as abas da planilha Equipe 048
+
 import express from "express";
 import fetch from "node-fetch";
-import dotenv from "dotenv";
 
-dotenv.config();
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// ✅ Rota 1 — Ler dados de uma aba específica
-app.get("/sheets", async (req, res) => {
-  const { id, range } = req.query;
+// 🔑 Usa a variável segura da Vercel (criada em Settings → Environment Variables)
+const API_KEY = process.env.API_KEY;
 
-  if (!id || !range) {
-    return res.status(400).json({ error: "Parâmetros 'id' e 'range' são obrigatórios." });
-  }
-
+// ✅ Rota principal: varredura de todas as abas
+app.get("/sheets/fullscan", async (req, res) => {
   try {
-    const response = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(
-        range
-      )}?key=${process.env.GOOGLE_API_KEY}`
-    );
-
-    if (!response.ok) {
-      const text = await response.text();
-      console.error("Erro ao acessar o Google Sheets:", text);
-      return res.status(response.status).send(text);
+    const { id } = req.query;
+    if (!id) {
+      return res.status(400).json({ error: "Parâmetro 'id' é obrigatório." });
     }
 
-    const data = await response.json();
-    res.json(data);
+    // 1️⃣ Obter lista de abas
+    const urlTabs = `https://sheets.googleapis.com/v4/spreadsheets/${id}?key=${API_KEY}`;
+    const tabsRes = await fetch(urlTabs);
+    const tabsData = await tabsRes.json();
+
+    if (!tabsData.sheets) {
+      return res.status(404).json({ error: "Planilha não encontrada ou sem abas acessíveis." });
+    }
+
+    // 2️⃣ Ler cada aba
+    const results = [];
+    for (const sheet of tabsData.sheets) {
+      const title = sheet.properties.title;
+      const encodedTitle = encodeURIComponent(`${title}!A1:Z1000`);
+      const sheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodedTitle}?key=${API_KEY}`;
+
+      const dataRes = await fetch(sheetUrl);
+      const data = await dataRes.json();
+
+      results.push({
+        title,
+        values: data.values || [],
+      });
+    }
+
+    // 3️⃣ Retornar tudo
+    res.json({
+      spreadsheetId: id,
+      totalSheets: results.length,
+      sheets: results,
+    });
   } catch (error) {
-    console.error("Erro interno ao acessar o Google Sheets:", error);
-    res.status(500).json({ error: "Erro interno ao acessar a planilha." });
+    console.error("Erro geral:", error);
+    res.status(500).json({ error: "Erro interno ao processar a planilha." });
   }
 });
 
-// ✅ Rota 2 — Listar todas as abas (competências)
-app.get("/sheets/tabs", async (req, res) => {
-  const { id } = req.query;
-
-  if (!id) {
-    return res.status(400).json({ error: 'Parâmetro "id" é obrigatório.' });
-  }
-
-  try {
-    const response = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${id}?key=${process.env.GOOGLE_API_KEY}`
-    );
-
-    if (!response.ok) {
-      const text = await response.text();
-      console.error("Erro ao listar abas:", text);
-      return res.status(response.status).send(text);
-    }
-
-    const data = await response.json();
-    res.json(data);
-  } catch (error) {
-    console.error("Erro interno ao listar abas:", error);
-    res.status(500).json({ error: "Erro interno ao listar abas." });
-  }
+// Rota de teste
+app.get("/", (req, res) => {
+  res.send("✅ Zenidon Proxy ativo e pronto para uso.");
 });
 
-// ✅ Servidor
-app.listen(3000, () => {
-  console.log("Zenidon Proxy rodando na porta 3000");
+app.listen(PORT, () => {
+  console.log(`Zenidon Proxy rodando na porta ${PORT}`);
 });
