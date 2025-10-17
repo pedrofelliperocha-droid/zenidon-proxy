@@ -8,6 +8,9 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const SHEETS_BASE_URL = "https://sheets.googleapis.com/v4/spreadsheets";
 const MAX_ROWS = 1000;
 
+// ------------------------------
+// Funções auxiliares
+// ------------------------------
 function normalizeText(s) {
   return String(s || "")
     .toUpperCase()
@@ -16,14 +19,30 @@ function normalizeText(s) {
     .replace(/\s+/g, " ")
     .trim();
 }
+
 function onlyDigits(s) {
-  return String(s || "").replace(/\D/g, "");
+  // Corrige notação científica (ex.: 7.09809060029098e+14)
+  const raw = String(s ?? "").trim();
+  if (/e\+/i.test(raw)) {
+    try {
+      const fixed = BigInt(Math.round(Number(raw))).toString();
+      return fixed.replace(/\D/g, "");
+    } catch {
+      return raw.replace(/\D/g, "");
+    }
+  }
+  return raw.replace(/\D/g, "");
 }
 
+// ------------------------------
+// Endpoint principal
+// ------------------------------
 app.get("/sheets/fullscan", async (req, res) => {
   const { id, query, debug } = req.query;
   if (!id || !query)
-    return res.status(400).json({ error: "Parâmetros 'id' e 'query' são obrigatórios." });
+    return res
+      .status(400)
+      .json({ error: "Parâmetros 'id' e 'query' são obrigatórios." });
 
   try {
     const metaRes = await fetch(`${SHEETS_BASE_URL}/${id}?key=${GOOGLE_API_KEY}`);
@@ -37,7 +56,6 @@ app.get("/sheets/fullscan", async (req, res) => {
 
     const results = [];
     const debugInfo = [];
-    const sampleValues = [];
 
     for (const sheet of metaData.sheets) {
       const title = sheet.properties.title;
@@ -49,6 +67,7 @@ app.get("/sheets/fullscan", async (req, res) => {
       const dataJson = await dataRes.json();
       if (!dataJson.values) continue;
 
+      // Cabeçalhos e linhas
       let headers = dataJson.values[0] || [];
       let rows = dataJson.values.slice(1);
       if (headers.length === 1 && dataJson.values.length > 1) {
@@ -66,13 +85,7 @@ app.get("/sheets/fullscan", async (req, res) => {
         /NOME|MULHER|IDOSO|PUERPERA|GESTANTE|CIDAD|DIABET|HIPERT/.test(h.name)
       );
 
-      // 🧪 CAPTURAR AMOSTRA DE VALORES CRUS DO CPF/CNS
-      if (colCpf && rows.length > 0) {
-        const amostra = rows.slice(0, 5).map((r) => r[colCpf.index]);
-        sampleValues.push({ title, col: colCpf.name, sample: amostra });
-      }
-
-      // --- busca normal (mesmo da v4.1)
+      // Filtro robusto e corrigido
       const matches = rows.filter((row) => {
         return row.some((cell, idx) => {
           const raw = String(cell ?? "").trim();
@@ -80,8 +93,9 @@ app.get("/sheets/fullscan", async (req, res) => {
           if (!digits) return false;
 
           if (isNumeric) {
-            if (numericQuery.length >= 11 && digits.endsWith(numericQuery.slice(-11))) return true;
-            if (numericQuery.length >= 15 && digits.endsWith(numericQuery.slice(-15))) return true;
+            // Comparação tolerante
+            if (digits.endsWith(numericQuery)) return true;
+            if (numericQuery.endsWith(digits)) return true;
           }
           return normalizeText(raw).includes(textQuery);
         });
@@ -113,9 +127,8 @@ app.get("/sheets/fullscan", async (req, res) => {
       spreadsheetId: id,
       totalSheets: results.length,
       sheets: results,
-      debug: debugInfo,
-      samples: sampleValues,
     };
+    if (debug) payload.debug = debugInfo;
 
     res.json(payload);
   } catch (err) {
@@ -124,10 +137,13 @@ app.get("/sheets/fullscan", async (req, res) => {
   }
 });
 
+// ------------------------------
+// Endpoint raiz
+// ------------------------------
 app.get("/", (req, res) =>
-  res.send("✅ Zenidon Proxy v4.2-debug — inspeção de valores brutos CPF/CNS")
+  res.send("✅ Zenidon Proxy v4.3-final — correção de precisão numérica e comparação CNS/CPF confiável")
 );
 
 app.listen(PORT, () =>
-  console.log("🚀 Zenidon Proxy v4.2-debug rodando na porta", PORT)
+  console.log("🚀 Zenidon Proxy v4.3-final rodando na porta", PORT)
 );
