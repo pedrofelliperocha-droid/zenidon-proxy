@@ -5,9 +5,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 /**
- * Zenidon Proxy – API segura para leitura filtrada da planilha Equipe 048.
- * Lê todas as abas do Google Sheets e retorna apenas as linhas correspondentes
- * ao nome, CPF ou CNS informado via parâmetro `query`.
+ * Zenidon Proxy – versão aprimorada
+ * Busca dinâmica em todas as abas da planilha “Equipe 048”.
+ * Inclui limpeza automática de formatação (CPF, CNS) e faixa expandida.
  */
 
 app.get("/sheets/fullscan", async (req, res) => {
@@ -35,30 +35,37 @@ app.get("/sheets/fullscan", async (req, res) => {
       return res.status(404).json({ error: "Planilha não encontrada ou sem abas acessíveis." });
     }
 
-    const searchTerm = query.toLowerCase().trim();
+    // 🔍 Normaliza o termo de busca removendo pontos, hífens e espaços
+    const searchTerm = query.toLowerCase().replace(/[.\-\s]/g, "").trim();
     const results = [];
 
-    // Percorre todas as abas e busca correspondências
     for (const sheet of metaData.sheets) {
       const title = sheet.properties?.title || "Sem título";
-      const range = `${title}!A1:Z1000`;
+      const range = `${title}!A1:Z3000`; // expandido até linha 3000
+
       const dataURL = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodeURIComponent(
         range
       )}?key=${apiKey}`;
-
       const dataRes = await fetch(dataURL);
       const dataJson = await dataRes.json();
 
       if (!dataJson.values) continue;
 
       const headers = dataJson.values[0] || [];
+
+      // 🔎 Busca inteligente (ignora pontuação e espaços)
       const matches = dataJson.values.filter((row) =>
-        row.some((cell) => cell?.toLowerCase().includes(searchTerm))
+        row.some((cell) =>
+          String(cell)
+            .toLowerCase()
+            .replace(/[.\-\s]/g, "")
+            .includes(searchTerm)
+        )
       );
 
       const limited = limit ? matches.slice(0, Number(limit)) : matches;
 
-      if (limited.length > 1) {
+      if (limited.length > 0) {
         results.push({
           title,
           rows: limited.length,
@@ -68,7 +75,6 @@ app.get("/sheets/fullscan", async (req, res) => {
       }
     }
 
-    // Monta a resposta consolidada
     res.json({
       spreadsheetId: id,
       totalSheets: results.length,
@@ -83,7 +89,7 @@ app.get("/sheets/fullscan", async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Zenidon Proxy rodando na porta ${PORT}`);
+  console.log(`✅ Zenidon Proxy ativo na porta ${PORT}`);
 });
 
 export default app;
