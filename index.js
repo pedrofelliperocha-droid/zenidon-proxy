@@ -8,9 +8,6 @@ const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
 const SHEETS_BASE_URL = "https://sheets.googleapis.com/v4/spreadsheets";
 const MAX_ROWS = 1000;
 
-// ------------------------------
-// Funções auxiliares
-// ------------------------------
 function normalizeText(s) {
   return String(s || "")
     .toUpperCase()
@@ -24,9 +21,6 @@ function onlyDigits(s) {
   return String(s || "").replace(/\D/g, "");
 }
 
-// ------------------------------
-// Endpoint principal
-// ------------------------------
 app.get("/sheets/fullscan", async (req, res) => {
   const { id, query, debug } = req.query;
   if (!id || !query) {
@@ -55,9 +49,6 @@ app.get("/sheets/fullscan", async (req, res) => {
     const debugInfo = [];
     const traceInfo = [];
 
-    // ------------------------------
-    // Varredura de todas as abas
-    // ------------------------------
     for (const sheet of metaData.sheets) {
       const title = sheet.properties.title;
       const range = `${encodeURIComponent(title)}!A1:Z${MAX_ROWS}`;
@@ -69,10 +60,15 @@ app.get("/sheets/fullscan", async (req, res) => {
       const dataJson = await dataRes.json();
       if (!dataJson.values) continue;
 
-      const headers = dataJson.values[0] || [];
-      const rows = dataJson.values.slice(1);
+      let headers = dataJson.values[0] || [];
+      let rows = dataJson.values.slice(1);
 
-      // --- NOVO: capturar cabeçalho cru para inspeção
+      // se a primeira linha tem apenas uma célula, pule-a
+      if (headers.length === 1 && dataJson.values.length > 1) {
+        headers = dataJson.values[1];
+        rows = dataJson.values.slice(2);
+      }
+
       if (debug == 3) {
         traceInfo.push({
           title,
@@ -80,11 +76,9 @@ app.get("/sheets/fullscan", async (req, res) => {
         });
       }
 
-      // --- Busca de correspondência
       const matches = rows.filter((row) =>
         row.some((cell) => {
           const cellRaw = String(cell ?? "").trim();
-
           if (isNumeric) {
             const digits = onlyDigits(cellRaw);
             if (!digits || digits.length < 6) return false;
@@ -95,22 +89,10 @@ app.get("/sheets/fullscan", async (req, res) => {
         })
       );
 
-      if (matches.length > 0) {
-        results.push({ title, matches });
-      }
-
-      if (debug) {
-        debugInfo.push({
-          title,
-          linhasLidas: rows.length,
-          correspondencias: matches.length,
-        });
-      }
+      if (matches.length > 0) results.push({ title, matches });
+      if (debug) debugInfo.push({ title, linhasLidas: rows.length, correspondencias: matches.length });
     }
 
-    // ------------------------------
-    // Resposta final
-    // ------------------------------
     const payload = {
       spreadsheetId: id,
       totalSheets: results.length,
@@ -127,15 +109,8 @@ app.get("/sheets/fullscan", async (req, res) => {
   }
 });
 
-// ------------------------------
-// Endpoint raiz
-// ------------------------------
 app.get("/", (req, res) => {
-  res.send(
-    "✅ Zenidon Proxy v3.9b-header-scan ativo — pronto para capturar cabeçalhos de todas as abas"
-  );
+  res.send("✅ Zenidon Proxy v3.9c — agora detectando cabeçalhos reais (segunda linha se necessário)");
 });
 
-app.listen(PORT, () =>
-  console.log("🚀 Zenidon Proxy v3.9b-header-scan rodando na porta", PORT)
-);
+app.listen(PORT, () => console.log("🚀 Zenidon Proxy v3.9c rodando na porta", PORT));
