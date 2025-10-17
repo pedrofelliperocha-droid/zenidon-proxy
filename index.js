@@ -74,11 +74,9 @@ app.get("/sheets/fullscan", async (req, res) => {
 
           if (isNumeric) {
             const digits = onlyDigits(cellRaw);
-            // ignora células vazias ou curtas
             if (!digits || digits.length < 6) return false;
             if (!numericQuery || numericQuery.length < 6) return false;
 
-            // comparação segura
             return (
               digits === numericQuery ||
               digits.endsWith(numericQuery) ||
@@ -111,7 +109,26 @@ app.get("/sheets/fullscan", async (req, res) => {
       sheets: results,
     };
 
-    if (debug) payload.debug = debugInfo;
+    // 6️⃣ Se debug=1 → mostra apenas estatísticas
+    if (debug == 1) payload.debug = debugInfo;
+
+    // 7️⃣ Se debug=2 → inclui prévia de dados reais da planilha
+    if (debug == 2) {
+      const sampleSheet = metaData.sheets[0]?.properties?.title;
+      if (sampleSheet) {
+        const sampleRange = `${encodeURIComponent(sampleSheet)}!A1:Z5`;
+        const sampleRes = await fetch(
+          `${SHEETS_BASE_URL}/${id}/values/${sampleRange}?key=${GOOGLE_API_KEY}`,
+          { headers: { Accept: "application/json" } }
+        );
+        const sampleJson = await sampleRes.json();
+        payload.debug = debugInfo;
+        payload.samplePreview = {
+          sheet: sampleSheet,
+          linhas: sampleJson.values || [],
+        };
+      }
+    }
 
     res.json(payload);
   } catch (err) {
@@ -124,10 +141,10 @@ app.get("/sheets/fullscan", async (req, res) => {
 // Endpoint raiz
 // ------------------------------
 app.get("/", (req, res) => {
-  res.send("✅ Zenidon Proxy v3.5-stable rodando com filtro seguro");
+  res.send("✅ Zenidon Proxy v3.6-debug-inspect rodando e pronto para diagnóstico");
 });
 
 // ------------------------------
 // Inicialização do servidor
 // ------------------------------
-app.listen(PORT, () => console.log("🚀 Zenidon Proxy v3.5-stable rodando na porta", PORT));
+app.listen(PORT, () => console.log("🚀 Zenidon Proxy v3.6-debug-inspect rodando na porta", PORT));
