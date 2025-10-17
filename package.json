@@ -1,0 +1,11 @@
+{
+  "name": "zenidon-proxy",
+  "version": "1.0.0",
+  "description": "Proxy seguro para integração GPT ↔ Google Sheets",
+  "main": "index.js",
+  "type": "module",
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-fetch": "^3.3.2"
+  }
+}
