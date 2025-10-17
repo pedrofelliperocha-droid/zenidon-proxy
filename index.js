@@ -1,65 +1,41 @@
-// Zenidon Proxy – Fullscan (versão completa)
-// Executa leitura dinâmica de TODAS as abas da planilha Equipe 048
-
 import express from "express";
 import fetch from "node-fetch";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 🔑 Usa a variável segura da Vercel (criada em Settings → Environment Variables)
-const API_KEY = process.env.API_KEY;
+// sua API key — já está guardada na Vercel como variável de ambiente
+const API_KEY = process.env.GOOGLE_API_KEY;
 
-// ✅ Rota principal: varredura de todas as abas
-app.get("/sheets/fullscan", async (req, res) => {
+if (!API_KEY) {
+  console.error("❌ ERRO: Nenhuma GOOGLE_API_KEY encontrada no ambiente da Vercel.");
+}
+
+// rota para listar abas
+app.get("/sheets/tabs", async (req, res) => {
+  const id = req.query.id;
+
+  console.log("🧭 [tabs] Recebido pedido para listar abas da planilha:", id);
+
+  if (!id) {
+    return res.status(400).json({ error: "ID da planilha não fornecido." });
+  }
+
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}?key=${API_KEY}`;
+
   try {
-    const { id } = req.query;
-    if (!id) {
-      return res.status(400).json({ error: "Parâmetro 'id' é obrigatório." });
+    const response = await fetch(url);
+    const data = await response.json();
+
+    console.log("🔍 [tabs] Resposta do Google:", data);
+
+    if (data.error) {
+      return res.status(data.error.code || 500).json(data);
     }
 
-    // 1️⃣ Obter lista de abas
-    const urlTabs = `https://sheets.googleapis.com/v4/spreadsheets/${id}?key=${API_KEY}`;
-    const tabsRes = await fetch(urlTabs);
-    const tabsData = await tabsRes.json();
+    const sheetNames = data.sheets?.map((s) => s.properties.title) || [];
 
-    if (!tabsData.sheets) {
-      return res.status(404).json({ error: "Planilha não encontrada ou sem abas acessíveis." });
-    }
-
-    // 2️⃣ Ler cada aba
-    const results = [];
-    for (const sheet of tabsData.sheets) {
-      const title = sheet.properties.title;
-      const encodedTitle = encodeURIComponent(`${title}!A1:Z1000`);
-      const sheetUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodedTitle}?key=${API_KEY}`;
-
-      const dataRes = await fetch(sheetUrl);
-      const data = await dataRes.json();
-
-      results.push({
-        title,
-        values: data.values || [],
-      });
-    }
-
-    // 3️⃣ Retornar tudo
     res.json({
       spreadsheetId: id,
-      totalSheets: results.length,
-      sheets: results,
-    });
-  } catch (error) {
-    console.error("Erro geral:", error);
-    res.status(500).json({ error: "Erro interno ao processar a planilha." });
-  }
-});
-
-// Rota de teste
-app.get("/", (req, res) => {
-  res.send("✅ Zenidon Proxy ativo e pronto para uso.");
-});
-
-app.listen(PORT, () => {
-  console.log(`Zenidon Proxy rodando na porta ${PORT}`);
-});
+      totalSheets: sheetNames.length,
+      sheets: sheetNames,
