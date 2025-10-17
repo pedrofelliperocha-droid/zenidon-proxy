@@ -30,7 +30,9 @@ function onlyDigits(s) {
 app.get("/sheets/fullscan", async (req, res) => {
   const { id, query, debug } = req.query;
   if (!id || !query) {
-    return res.status(400).json({ error: "Parâmetros 'id' e 'query' são obrigatórios." });
+    return res
+      .status(400)
+      .json({ error: "Parâmetros 'id' e 'query' são obrigatórios." });
   }
 
   try {
@@ -38,8 +40,11 @@ app.get("/sheets/fullscan", async (req, res) => {
       headers: { Accept: "application/json" },
     });
     const metaData = await metaRes.json();
+
     if (!metaData.sheets) {
-      return res.status(404).json({ error: "Planilha não encontrada ou sem abas acessíveis." });
+      return res
+        .status(404)
+        .json({ error: "Planilha não encontrada ou sem abas acessíveis." });
     }
 
     const numericQuery = onlyDigits(query);
@@ -50,6 +55,9 @@ app.get("/sheets/fullscan", async (req, res) => {
     const debugInfo = [];
     const traceInfo = [];
 
+    // ------------------------------
+    // Varredura de todas as abas
+    // ------------------------------
     for (const sheet of metaData.sheets) {
       const title = sheet.properties.title;
       const range = `${encodeURIComponent(title)}!A1:Z${MAX_ROWS}`;
@@ -64,7 +72,15 @@ app.get("/sheets/fullscan", async (req, res) => {
       const headers = dataJson.values[0] || [];
       const rows = dataJson.values.slice(1);
 
-      // 1️⃣ Filtro principal
+      // --- NOVO: capturar cabeçalho cru para inspeção
+      if (debug == 3) {
+        traceInfo.push({
+          title,
+          header: headers,
+        });
+      }
+
+      // --- Busca de correspondência
       const matches = rows.filter((row) =>
         row.some((cell) => {
           const cellRaw = String(cell ?? "").trim();
@@ -72,25 +88,16 @@ app.get("/sheets/fullscan", async (req, res) => {
           if (isNumeric) {
             const digits = onlyDigits(cellRaw);
             if (!digits || digits.length < 6) return false;
-
-            // CPF = 11 dígitos | CNS = 15 dígitos
-            const isCPF = digits.length === 11;
-            const isCNS = digits.length === 15;
-            const qIsCPF = numericQuery.length === 11;
-            const qIsCNS = numericQuery.length === 15;
-
-            if ((isCPF && qIsCPF) || (isCNS && qIsCNS)) {
-              return digits === numericQuery;
-            }
-            // Busca parcial
-            return digits.endsWith(numericQuery) || numericQuery.endsWith(digits);
+            return digits === numericQuery;
           } else {
             return normalizeText(cellRaw).includes(textQuery);
           }
         })
       );
 
-      if (matches.length > 0) results.push({ title, matches });
+      if (matches.length > 0) {
+        results.push({ title, matches });
+      }
 
       if (debug) {
         debugInfo.push({
@@ -99,28 +106,11 @@ app.get("/sheets/fullscan", async (req, res) => {
           correspondencias: matches.length,
         });
       }
-
-      // 2️⃣ Captura de amostra das colunas de CPF/CNS
-      if (debug == 3) {
-        const headerMatches = headers
-          .map((h, idx) => ({ idx, name: normalizeText(h) }))
-          .filter((h) =>
-            ["CPF", "CNS", "CPF/CNS", "CPF CNS", "DOCUMENTO"].some((kw) =>
-              h.name.includes(normalizeText(kw))
-            )
-          );
-
-        for (const h of headerMatches) {
-          const sample = rows.slice(0, 10).map((r) => String(r[h.idx] ?? "").trim());
-          traceInfo.push({
-            title,
-            coluna: headers[h.idx],
-            amostra: sample,
-          });
-        }
-      }
     }
 
+    // ------------------------------
+    // Resposta final
+    // ------------------------------
     const payload = {
       spreadsheetId: id,
       totalSheets: results.length,
@@ -137,8 +127,15 @@ app.get("/sheets/fullscan", async (req, res) => {
   }
 });
 
+// ------------------------------
+// Endpoint raiz
+// ------------------------------
 app.get("/", (req, res) => {
-  res.send("✅ Zenidon Proxy v3.9-autoformat ativo — pronto para diagnóstico de CPF/CNS");
+  res.send(
+    "✅ Zenidon Proxy v3.9b-header-scan ativo — pronto para capturar cabeçalhos de todas as abas"
+  );
 });
 
-app.listen(PORT, () => console.log("🚀 Zenidon Proxy v3.9-autoformat rodando na porta", PORT));
+app.listen(PORT, () =>
+  console.log("🚀 Zenidon Proxy v3.9b-header-scan rodando na porta", PORT)
+);
