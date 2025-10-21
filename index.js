@@ -1,7 +1,7 @@
 // ===============================
-// 🧩 ZENIDON PROXY – versão 2025-10-R9
+// 🧩 ZENIDON PROXY – versão 2025-10-R9.1
 // Proxy seguro para integração GPT ⇄ Google Sheets
-// ✅ Compatível com: CPFs truncados, zeros ausentes, tipos mistos, abas curtas
+// ✅ Compatível com: CPFs truncados, zeros ausentes, tipos mistos e abas longas
 // ===============================
 
 import express from "express";
@@ -25,12 +25,10 @@ function normalize(text = "") {
     .toLowerCase();
 }
 
-// Extrai apenas dígitos
 function soDigitos(s = "") {
   return String(s).replace(/[^0-9]/g, "");
 }
 
-// Reconstrói zeros à esquerda e identifica truncamentos
 function ajustarCpf(raw = "") {
   const digits = soDigitos(raw);
   if (!digits) return { cpf: "", truncado: false };
@@ -81,7 +79,7 @@ app.get("/sheets/fullscan", async (req, res) => {
 
     for (const sheet of metaData.sheets) {
       const title = sheet.properties.title;
-      const range = `${title}!A1:Z1000`;
+      const range = `${title}!A:Z`; // ✅ Leitura ilimitada (todas as linhas)
 
       try {
         const valuesResponse = await fetch(
@@ -215,5 +213,5 @@ app.get("/sheets/fullscan", async (req, res) => {
 // ------------------------------------------------------------
 // 🚀 Inicialização
 app.listen(PORT, () => {
-  console.log(`Zenidon Proxy R9 ativo na porta ${PORT}`);
+  console.log(`Zenidon Proxy R9.1 ativo na porta ${PORT}`);
 });
