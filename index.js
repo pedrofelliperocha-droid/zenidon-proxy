@@ -1,5 +1,5 @@
 // ===============================
-// 🧩 ZENIDON PROXY – versão 2025-10-R2
+// 🧩 ZENIDON PROXY – versão 2025-10-R3
 // Proxy seguro para integração GPT ⇄ Google Sheets
 // Compatível com a planilha “Equipe 048” (USF Denisson Menezes)
 // ===============================
@@ -13,21 +13,25 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 // ------------------------------------------------------------
-// 🧠 Função auxiliar: normaliza textos
-// Mantém zeros à esquerda, remove acentos, pontuação e espaços múltiplos.
+// 🧠 Funções auxiliares
 function normalize(text = "") {
   if (text === null || text === undefined) return "";
   return String(text)
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")  // remove acentos
-    .replace(/[^\dA-Za-z\s]/g, "")    // remove pontos, traços, barras
-    .replace(/\s+/g, " ")             // remove espaços múltiplos
+    .replace(/[\u0300-\u036f]/g, "")   // remove acentos
+    .replace(/[^\dA-Za-z\s]/g, "")     // remove pontuação
+    .replace(/\s+/g, " ")              // remove espaços múltiplos
     .trim()
     .toLowerCase();
 }
+
+// Remove tudo que não for número (para comparações de CPF/CNS)
+function soDigitos(s = "") {
+  return String(s).replace(/[^0-9]/g, "");
+}
 // ------------------------------------------------------------
 
-// ✅ Endpoint principal: /sheets/fullscan
+// ✅ Endpoint principal
 app.get("/sheets/fullscan", async (req, res) => {
   const { id, query } = req.query;
 
@@ -38,6 +42,7 @@ app.get("/sheets/fullscan", async (req, res) => {
   const API_KEY = process.env.GOOGLE_API_KEY;
   const baseUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}`;
   const busca = normalize(query);
+  const buscaDigits = soDigitos(busca);
 
   const resultado = {
     spreadsheetId: id,
@@ -47,7 +52,6 @@ app.get("/sheets/fullscan", async (req, res) => {
   };
 
   try {
-    // Obtém a lista de abas da planilha
     const metaResponse = await fetch(`${baseUrl}?key=${API_KEY}`);
     const metaData = await metaResponse.json();
 
@@ -57,7 +61,7 @@ app.get("/sheets/fullscan", async (req, res) => {
 
     resultado.totalSheets = metaData.sheets.length;
 
-    // Loop pelas abas
+    // Percorre todas as abas
     for (const sheet of metaData.sheets) {
       const title = sheet.properties.title;
       const range = `${title}!A1:Z1000`;
@@ -78,10 +82,9 @@ app.get("/sheets/fullscan", async (req, res) => {
         const colunas = headers.map((h) => normalize(h));
 
         // ------------------------------------------------------------
-        // 🧩 Identificação das colunas relevantes
+        // 🔍 Identificação das colunas relevantes
         const colCpf = colunas.findIndex((h) => h.includes("cpf") || h.includes("cns"));
 
-        // Identifica TODAS as colunas possíveis de nome (varia conforme a aba)
         const nomeColunas = colunas
           .map((h, i) => ({ nome: h, indice: i }))
           .filter(({ nome }) =>
@@ -95,31 +98,36 @@ app.get("/sheets/fullscan", async (req, res) => {
           .map(({ indice }) => indice);
         // ------------------------------------------------------------
 
-        // 🧮 Filtragem direta linha a linha
+        // 🧮 Filtragem linha a linha
         const matches = [];
 
         for (let i = 2; i < linhas.length; i++) {
           const linha = linhas[i];
           const textoCompleto = linha.join(" ");
-          const cpf = linha[colCpf] || "";
-
-          // Concatena todos os campos possíveis de nome
+          const cpfRaw = linha[colCpf] || "";
           const nomesPossiveis = nomeColunas.map((idx) => linha[idx] || "").join(" ");
 
-          if (
-            normalize(cpf).includes(busca) ||
-            normalize(nomesPossiveis).includes(busca) ||
-            normalize(textoCompleto).includes(busca)
-          ) {
-            matches.push(linha);
-          }
+          const nomesNorm = normalize(nomesPossiveis);
+          const textoNorm = normalize(textoCompleto);
+          const cpfNorm = normalize(cpfRaw);
+          const cpfDigits = soDigitos(cpfNorm);
 
-          // Proteção contra volume excessivo
-          if (matches.length >= 30) break;
+          // Regras de acerto
+          const hitCpf =
+            buscaDigits &&
+            cpfDigits &&
+            (cpfDigits.includes(buscaDigits) || buscaDigits.includes(cpfDigits));
+
+          const hitNome = !buscaDigits && nomesNorm.includes(busca);
+          const hitRow = !buscaDigits && textoNorm.includes(busca);
+
+          if (hitCpf || hitNome || hitRow) {
+            matches.push(linha);
+            if (matches.length >= 30) break; // proteção de volume
+          }
         }
 
         // ------------------------------------------------------------
-        // 📊 Adiciona resultados ao objeto final
         resultado.sheets.push({
           title,
           rows: linhas.length,
@@ -133,6 +141,11 @@ app.get("/sheets/fullscan", async (req, res) => {
           correspondencias: matches.length,
           colCpf: headers[colCpf] || "não encontrada",
           colNomeIndices: nomeColunas.map((i) => headers[i] || "não encontrada"),
+          buscaDigits,
+          exemploCpfDigits:
+            linhas[2] && colCpf >= 0
+              ? soDigitos(linhas[2][colCpf]).slice(0, 5) + "…"
+              : "—",
         });
         // ------------------------------------------------------------
 
@@ -141,9 +154,7 @@ app.get("/sheets/fullscan", async (req, res) => {
       }
     }
 
-    // Retorna o resultado consolidado
     res.json(resultado);
-
   } catch (error) {
     res.status(500).json({
       error: "Erro interno ao processar a planilha.",
