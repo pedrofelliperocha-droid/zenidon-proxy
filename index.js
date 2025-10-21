@@ -1,5 +1,5 @@
 // ===============================
-// 🧩 ZENIDON PROXY – versão 2025-10-R3
+// 🧩 ZENIDON PROXY – versão 2025-10-R4
 // Proxy seguro para integração GPT ⇄ Google Sheets
 // Compatível com a planilha “Equipe 048” (USF Denisson Menezes)
 // ===============================
@@ -103,6 +103,8 @@ app.get("/sheets/fullscan", async (req, res) => {
 
         for (let i = 2; i < linhas.length; i++) {
           const linha = linhas[i];
+          if (!linha || linha.filter((x) => x && String(x).trim() !== "").length === 0) continue;
+
           const textoCompleto = linha.join(" ");
           const cpfRaw = linha[colCpf] || "";
           const nomesPossiveis = nomeColunas.map((idx) => linha[idx] || "").join(" ");
@@ -112,12 +114,16 @@ app.get("/sheets/fullscan", async (req, res) => {
           const cpfNorm = normalize(cpfRaw);
           const cpfDigits = soDigitos(cpfNorm);
 
-          // Regras de acerto
+          // Regras de acerto:
+          // 1) Busca numérica (CPF/CNS) tolerante a zeros à esquerda e formatação variada
           const hitCpf =
             buscaDigits &&
             cpfDigits &&
-            (cpfDigits.includes(buscaDigits) || buscaDigits.includes(cpfDigits));
+            (cpfDigits.includes(buscaDigits) ||
+             buscaDigits.includes(cpfDigits) ||
+             textoNorm.includes(buscaDigits));
 
+          // 2) Busca textual por nome ou fragmento
           const hitNome = !buscaDigits && nomesNorm.includes(busca);
           const hitRow = !buscaDigits && textoNorm.includes(busca);
 
@@ -142,10 +148,6 @@ app.get("/sheets/fullscan", async (req, res) => {
           colCpf: headers[colCpf] || "não encontrada",
           colNomeIndices: nomeColunas.map((i) => headers[i] || "não encontrada"),
           buscaDigits,
-          exemploCpfDigits:
-            linhas[2] && colCpf >= 0
-              ? soDigitos(linhas[2][colCpf]).slice(0, 5) + "…"
-              : "—",
         });
         // ------------------------------------------------------------
 
