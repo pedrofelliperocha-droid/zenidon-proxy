@@ -1,7 +1,7 @@
 // ===============================
-// 🧩 ZENIDON PROXY – versão 2025-10-R7
+// 🧩 ZENIDON PROXY – versão 2025-10-R8
 // Proxy seguro para integração GPT ⇄ Google Sheets
-// Compatível com busca híbrida (CPF + Nome)
+// ✅ Compatível com: CPFs numéricos, zeros ausentes, abas truncadas
 // ===============================
 
 import express from "express";
@@ -18,9 +18,9 @@ function normalize(text = "") {
   if (text === null || text === undefined) return "";
   return String(text)
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")   // remove acentos
-    .replace(/[^\dA-Za-z\s]/g, "")     // remove pontuação
-    .replace(/\s+/g, " ")              // remove espaços múltiplos
+    .replace(/[\u0300-\u036f]/g, "") // remove acentos
+    .replace(/[^\dA-Za-z\s]/g, "")   // remove pontuação
+    .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
 }
@@ -29,21 +29,29 @@ function normalize(text = "") {
 function soDigitos(s = "") {
   return String(s).replace(/[^0-9]/g, "");
 }
-// ------------------------------------------------------------
 
+// Reconstrói zeros à esquerda se for CPF de 11 dígitos
+function padCpfDigits(raw = "") {
+  const digits = soDigitos(raw);
+  if (digits.length < 11) return digits.padStart(11, "0");
+  return digits;
+}
+
+// ------------------------------------------------------------
 // ✅ Endpoint principal
 app.get("/sheets/fullscan", async (req, res) => {
-  // Suporte híbrido (CPF + nome)
   const { id, query, query_cpf, query_nome } = req.query;
 
   if (!id || (!query && !query_cpf && !query_nome)) {
-    return res.status(400).json({ error: "Parâmetros ausentes: id e query são obrigatórios." });
+    return res
+      .status(400)
+      .json({ error: "Parâmetros ausentes: id e query são obrigatórios." });
   }
 
   const API_KEY = process.env.GOOGLE_API_KEY;
   const baseUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}`;
 
-  // Define buscas principal e secundária
+  // Busca principal e secundária
   const buscaPrimaria = normalize(query_cpf || query || "");
   const buscaSecundaria = normalize(query_nome || "");
   const buscaPrimariaDigits = soDigitos(buscaPrimaria);
@@ -60,7 +68,9 @@ app.get("/sheets/fullscan", async (req, res) => {
     const metaData = await metaResponse.json();
 
     if (!metaData.sheets) {
-      return res.status(404).json({ error: "Planilha não encontrada ou sem abas acessíveis." });
+      return res
+        .status(404)
+        .json({ error: "Planilha não encontrada ou sem abas acessíveis." });
     }
 
     resultado.totalSheets = metaData.sheets.length;
@@ -81,12 +91,15 @@ app.get("/sheets/fullscan", async (req, res) => {
         }
 
         const linhas = valuesData.values;
-        const headers = (linhas[1] || []).filter((h) => h && String(h).trim() !== "");
+        const headers = (linhas[1] || []).filter(
+          (h) => h && String(h).trim() !== ""
+        );
         const colunas = headers.map((h) => normalize(h));
 
-        // ------------------------------------------------------------
-        // 🔍 Identificação das colunas relevantes
-        const colCpf = colunas.findIndex((h) => h.includes("cpf") || h.includes("cns"));
+        // Detectar colunas de interesse
+        const colCpf = colunas.findIndex(
+          (h) => h.includes("cpf") || h.includes("cns")
+        );
 
         const nomeColunas = colunas
           .map((h, i) => ({ nome: h, indice: i }))
@@ -97,41 +110,37 @@ app.get("/sheets/fullscan", async (req, res) => {
             nome.includes("hipertenso") ||
             nome.includes("diabetico") ||
             nome.includes("cidadao") ||
-            nome.includes("criança") ||
+            nome.includes("crianca") ||
             nome.includes("idoso")
           )
           .map(({ indice }) => indice);
-        // ------------------------------------------------------------
 
         const matches = [];
 
-        // 🧮 Primeira fase: busca por CPF/CNS
-        if (buscaPrimaria) {
+        // ------------------------------------------------------------
+        // 🧮 1ª fase — Busca por CPF/CNS
+        if (buscaPrimariaDigits) {
           for (let i = 2; i < linhas.length; i++) {
             const linha = (linhas[i] || []).map((v) =>
               v === null || v === undefined ? "" : String(v)
             );
-            if (!linha || linha.filter((x) => x && String(x).trim() !== "").length === 0) continue;
+            if (!linha.join("").trim()) continue;
 
-            const textoCompleto = linha.join(" ");
             const cpfRaw = linha[colCpf] || "";
-            const nomesPossiveis = nomeColunas.map((idx) => linha[idx] || "").join(" ");
-
-            const textoNorm = normalize(textoCompleto);
-            const cpfNorm = normalize(cpfRaw);
-            const cpfDigits = soDigitos(cpfNorm);
+            const cpfDigits = padCpfDigits(cpfRaw);
+            const textoNorm = normalize(linha.join(" "));
 
             const hitCpf =
-              buscaPrimariaDigits &&
               cpfDigits &&
-              (
-                cpfDigits.includes(buscaPrimariaDigits) ||
+              (cpfDigits.includes(buscaPrimariaDigits) ||
                 buscaPrimariaDigits.includes(cpfDigits) ||
-                // tolera zeros à esquerda ausentes
-                cpfDigits.replace(/^0+/, "").includes(buscaPrimariaDigits.replace(/^0+/, "")) ||
-                buscaPrimariaDigits.replace(/^0+/, "").includes(cpfDigits.replace(/^0+/, "")) ||
-                textoNorm.includes(buscaPrimariaDigits)
-              );
+                cpfDigits.replace(/^0+/, "").includes(
+                  buscaPrimariaDigits.replace(/^0+/, "")
+                ) ||
+                buscaPrimariaDigits
+                  .replace(/^0+/, "")
+                  .includes(cpfDigits.replace(/^0+/, "")) ||
+                textoNorm.includes(buscaPrimariaDigits));
 
             if (hitCpf) {
               matches.push(linha);
@@ -140,21 +149,25 @@ app.get("/sheets/fullscan", async (req, res) => {
           }
         }
 
-        // 🧮 Segunda fase: fallback por nome (se nenhum match anterior)
+        // ------------------------------------------------------------
+        // 🧮 2ª fase — Fallback por nome (se nada encontrado)
         if (matches.length === 0 && buscaSecundaria) {
           for (let i = 2; i < linhas.length; i++) {
             const linha = (linhas[i] || []).map((v) =>
               v === null || v === undefined ? "" : String(v)
             );
-            if (!linha || linha.filter((x) => x && String(x).trim() !== "").length === 0) continue;
+            if (!linha.join("").trim()) continue;
 
-            const textoCompleto = linha.join(" ");
-            const nomesPossiveis = nomeColunas.map((idx) => linha[idx] || "").join(" ");
-
+            const nomesPossiveis = nomeColunas
+              .map((idx) => linha[idx] || "")
+              .join(" ");
             const nomesNorm = normalize(nomesPossiveis);
-            const textoNorm = normalize(textoCompleto);
+            const textoNorm = normalize(linha.join(" "));
 
-            if (nomesNorm.includes(buscaSecundaria) || textoNorm.includes(buscaSecundaria)) {
+            if (
+              nomesNorm.includes(buscaSecundaria) ||
+              textoNorm.includes(buscaSecundaria)
+            ) {
               matches.push(linha);
               if (matches.length >= 30) break;
             }
@@ -177,7 +190,6 @@ app.get("/sheets/fullscan", async (req, res) => {
           buscaPrimaria,
           buscaSecundaria,
         });
-
       } catch (innerError) {
         resultado.debug.push({ title, erro: innerError.message });
       }
