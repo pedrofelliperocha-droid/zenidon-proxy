@@ -1,3 +1,9 @@
+// ===============================
+// 🧩 ZENIDON PROXY – versão revisada (2025-10)
+// Proxy seguro para integração GPT ⇄ Google Sheets
+// Compatível com planilha “Equipe 048” (USF Denisson Menezes)
+// ===============================
+
 import express from "express";
 import fetch from "node-fetch";
 
@@ -6,7 +12,8 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Função auxiliar: normaliza textos (remove acentos, pontuação e espaços extras)
+// ------------------------------------------------------------
+// 🧠 Função auxiliar: normaliza textos (remove acentos, pontuação e espaços extras)
 function normalize(text = "") {
   return text
     .toString()
@@ -17,8 +24,9 @@ function normalize(text = "") {
     .trim()
     .toLowerCase();
 }
+// ------------------------------------------------------------
 
-// Endpoint principal: /sheets/fullscan
+// ✅ Endpoint principal: /sheets/fullscan
 app.get("/sheets/fullscan", async (req, res) => {
   const { id, query } = req.query;
 
@@ -48,7 +56,7 @@ app.get("/sheets/fullscan", async (req, res) => {
 
     resultado.totalSheets = metaData.sheets.length;
 
-    // Loop pelas abas
+    // Loop por todas as abas da planilha
     for (const sheet of metaData.sheets) {
       const title = sheet.properties.title;
       const range = `${title}!A1:Z1000`;
@@ -68,30 +76,49 @@ app.get("/sheets/fullscan", async (req, res) => {
         const headers = linhas[1] || [];
         const colunas = headers.map((h) => normalize(h));
 
-        // Índices de colunas relevantes
+        // ------------------------------------------------------------
+        // 🧩 Identificação das colunas relevantes
         const colCpf = colunas.findIndex((h) => h.includes("cpf") || h.includes("cns"));
-        const colNome = colunas.findIndex((h) => h.includes("mulher") || h.includes("cidadao") || h.includes("gestante") || h.includes("hipertenso") || h.includes("diabetico"));
 
-        // Filtragem direta linha a linha
+        // Identifica TODAS as possíveis colunas que contêm nomes
+        const nomeColunas = colunas
+          .map((h, i) => ({ nome: h, indice: i }))
+          .filter(({ nome }) =>
+            nome.includes("mulher") ||
+            nome.includes("gestante") ||
+            nome.includes("puerpera") ||
+            nome.includes("hipertenso") ||
+            nome.includes("diabetico") ||
+            nome.includes("cidadao")
+          )
+          .map(({ indice }) => indice);
+        // ------------------------------------------------------------
+
+        // 🧮 Filtragem direta linha a linha
         const matches = [];
+
         for (let i = 2; i < linhas.length; i++) {
           const linha = linhas[i];
           const textoCompleto = linha.join(" ");
           const cpf = linha[colCpf] || "";
-          const nome = linha[colNome] || "";
+
+          // Concatena todos os campos possíveis de nome
+          const nomesPossiveis = nomeColunas.map((idx) => linha[idx] || "").join(" ");
 
           if (
             normalize(cpf).includes(busca) ||
-            normalize(nome).includes(busca) ||
+            normalize(nomesPossiveis).includes(busca) ||
             normalize(textoCompleto).includes(busca)
           ) {
             matches.push(linha);
           }
 
-          // Parar caso encontre mais de 30 resultados (proteção de volume)
+          // Proteção contra volume excessivo
           if (matches.length >= 30) break;
         }
 
+        // ------------------------------------------------------------
+        // 📊 Adiciona resultados ao objeto final
         resultado.sheets.push({
           title,
           rows: linhas.length,
@@ -104,15 +131,18 @@ app.get("/sheets/fullscan", async (req, res) => {
           linhasLidas: linhas.length,
           correspondencias: matches.length,
           colCpf: headers[colCpf] || "não encontrada",
-          colNome: headers[colNome] || "não encontrada",
+          colNomeIndices: nomeColunas.map((i) => headers[i] || "não encontrada"),
         });
+        // ------------------------------------------------------------
+
       } catch (innerError) {
         resultado.debug.push({ title, erro: innerError.message });
       }
     }
 
-    // Retorna apenas o essencial
+    // Retorna o resultado consolidado
     res.json(resultado);
+
   } catch (error) {
     res.status(500).json({
       error: "Erro interno ao processar a planilha.",
@@ -121,6 +151,8 @@ app.get("/sheets/fullscan", async (req, res) => {
   }
 });
 
+// ------------------------------------------------------------
+// 🚀 Inicialização do servidor
 app.listen(PORT, () => {
   console.log(`Zenidon Proxy ativo na porta ${PORT}`);
 });
