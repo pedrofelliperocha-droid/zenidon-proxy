@@ -1,7 +1,7 @@
 // ===============================
-// 🧩 ZENIDON PROXY – versão revisada (2025-10)
+// 🧩 ZENIDON PROXY – versão 2025-10-R2
 // Proxy seguro para integração GPT ⇄ Google Sheets
-// Compatível com planilha “Equipe 048” (USF Denisson Menezes)
+// Compatível com a planilha “Equipe 048” (USF Denisson Menezes)
 // ===============================
 
 import express from "express";
@@ -13,14 +13,15 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json());
 
 // ------------------------------------------------------------
-// 🧠 Função auxiliar: normaliza textos (remove acentos, pontuação e espaços extras)
+// 🧠 Função auxiliar: normaliza textos
+// Mantém zeros à esquerda, remove acentos, pontuação e espaços múltiplos.
 function normalize(text = "") {
-  return text
-    .toString()
+  if (text === null || text === undefined) return "";
+  return String(text)
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\w\s]/g, "")
-    .replace(/\s+/g, " ")
+    .replace(/[\u0300-\u036f]/g, "")  // remove acentos
+    .replace(/[^\dA-Za-z\s]/g, "")    // remove pontos, traços, barras
+    .replace(/\s+/g, " ")             // remove espaços múltiplos
     .trim()
     .toLowerCase();
 }
@@ -46,7 +47,7 @@ app.get("/sheets/fullscan", async (req, res) => {
   };
 
   try {
-    // Obtém a lista de abas
+    // Obtém a lista de abas da planilha
     const metaResponse = await fetch(`${baseUrl}?key=${API_KEY}`);
     const metaData = await metaResponse.json();
 
@@ -56,7 +57,7 @@ app.get("/sheets/fullscan", async (req, res) => {
 
     resultado.totalSheets = metaData.sheets.length;
 
-    // Loop por todas as abas da planilha
+    // Loop pelas abas
     for (const sheet of metaData.sheets) {
       const title = sheet.properties.title;
       const range = `${title}!A1:Z1000`;
@@ -80,7 +81,7 @@ app.get("/sheets/fullscan", async (req, res) => {
         // 🧩 Identificação das colunas relevantes
         const colCpf = colunas.findIndex((h) => h.includes("cpf") || h.includes("cns"));
 
-        // Identifica TODAS as possíveis colunas que contêm nomes
+        // Identifica TODAS as colunas possíveis de nome (varia conforme a aba)
         const nomeColunas = colunas
           .map((h, i) => ({ nome: h, indice: i }))
           .filter(({ nome }) =>
