@@ -1,7 +1,7 @@
 // ===============================
-// 🧩 ZENIDON PROXY – versão 2025-10-R8
+// 🧩 ZENIDON PROXY – versão 2025-10-R9
 // Proxy seguro para integração GPT ⇄ Google Sheets
-// ✅ Compatível com: CPFs numéricos, zeros ausentes, abas truncadas
+// ✅ Compatível com: CPFs truncados, zeros ausentes, tipos mistos, abas curtas
 // ===============================
 
 import express from "express";
@@ -18,8 +18,8 @@ function normalize(text = "") {
   if (text === null || text === undefined) return "";
   return String(text)
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "") // remove acentos
-    .replace(/[^\dA-Za-z\s]/g, "")   // remove pontuação
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\dA-Za-z\s]/g, "")
     .replace(/\s+/g, " ")
     .trim()
     .toLowerCase();
@@ -30,14 +30,19 @@ function soDigitos(s = "") {
   return String(s).replace(/[^0-9]/g, "");
 }
 
-// Reconstrói zeros à esquerda se for CPF de 11 dígitos
-function padCpfDigits(raw = "") {
+// Reconstrói zeros à esquerda e identifica truncamentos
+function ajustarCpf(raw = "") {
   const digits = soDigitos(raw);
-  if (digits.length < 11) return digits.padStart(11, "0");
-  return digits;
+  if (!digits) return { cpf: "", truncado: false };
+  if (digits.length === 11) return { cpf: digits, truncado: false };
+  if (digits.length < 11 && digits.length >= 8) {
+    const corrigido = digits.padStart(11, "0");
+    return { cpf: corrigido, truncado: true };
+  }
+  return { cpf: digits, truncado: false };
 }
-
 // ------------------------------------------------------------
+
 // ✅ Endpoint principal
 app.get("/sheets/fullscan", async (req, res) => {
   const { id, query, query_cpf, query_nome } = req.query;
@@ -51,7 +56,6 @@ app.get("/sheets/fullscan", async (req, res) => {
   const API_KEY = process.env.GOOGLE_API_KEY;
   const baseUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}`;
 
-  // Busca principal e secundária
   const buscaPrimaria = normalize(query_cpf || query || "");
   const buscaSecundaria = normalize(query_nome || "");
   const buscaPrimariaDigits = soDigitos(buscaPrimaria);
@@ -96,7 +100,6 @@ app.get("/sheets/fullscan", async (req, res) => {
         );
         const colunas = headers.map((h) => normalize(h));
 
-        // Detectar colunas de interesse
         const colCpf = colunas.findIndex(
           (h) => h.includes("cpf") || h.includes("cns")
         );
@@ -116,9 +119,10 @@ app.get("/sheets/fullscan", async (req, res) => {
           .map(({ indice }) => indice);
 
         const matches = [];
+        let truncamentos = 0;
 
         // ------------------------------------------------------------
-        // 🧮 1ª fase — Busca por CPF/CNS
+        // 🧮 1ª fase — Busca por CPF/CNS (tolerante)
         if (buscaPrimariaDigits) {
           for (let i = 2; i < linhas.length; i++) {
             const linha = (linhas[i] || []).map((v) =>
@@ -127,8 +131,11 @@ app.get("/sheets/fullscan", async (req, res) => {
             if (!linha.join("").trim()) continue;
 
             const cpfRaw = linha[colCpf] || "";
-            const cpfDigits = padCpfDigits(cpfRaw);
+            const { cpf: cpfCorrigido, truncado } = ajustarCpf(cpfRaw);
+            if (truncado) truncamentos++;
+
             const textoNorm = normalize(linha.join(" "));
+            const cpfDigits = cpfCorrigido;
 
             const hitCpf =
               cpfDigits &&
@@ -185,6 +192,7 @@ app.get("/sheets/fullscan", async (req, res) => {
           title,
           linhasLidas: linhas.length,
           correspondencias: matches.length,
+          truncamentosDetectados: truncamentos,
           colCpf: headers[colCpf] || "não encontrada",
           colNomeIndices: nomeColunas.map((i) => headers[i] || "não encontrada"),
           buscaPrimaria,
@@ -207,5 +215,5 @@ app.get("/sheets/fullscan", async (req, res) => {
 // ------------------------------------------------------------
 // 🚀 Inicialização
 app.listen(PORT, () => {
-  console.log(`Zenidon Proxy ativo na porta ${PORT}`);
+  console.log(`Zenidon Proxy R9 ativo na porta ${PORT}`);
 });
