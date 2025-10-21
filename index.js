@@ -1,7 +1,7 @@
 // ===============================
-// 🧩 ZENIDON PROXY – versão 2025-10-R4
+// 🧩 ZENIDON PROXY – versão 2025-10-R7
 // Proxy seguro para integração GPT ⇄ Google Sheets
-// Compatível com a planilha “Equipe 048” (USF Denisson Menezes)
+// Compatível com busca híbrida (CPF + Nome)
 // ===============================
 
 import express from "express";
@@ -25,7 +25,7 @@ function normalize(text = "") {
     .toLowerCase();
 }
 
-// Remove tudo que não for número (para comparações de CPF/CNS)
+// Extrai apenas dígitos
 function soDigitos(s = "") {
   return String(s).replace(/[^0-9]/g, "");
 }
@@ -33,16 +33,20 @@ function soDigitos(s = "") {
 
 // ✅ Endpoint principal
 app.get("/sheets/fullscan", async (req, res) => {
-  const { id, query } = req.query;
+  // Suporte híbrido (CPF + nome)
+  const { id, query, query_cpf, query_nome } = req.query;
 
-  if (!id || !query) {
+  if (!id || (!query && !query_cpf && !query_nome)) {
     return res.status(400).json({ error: "Parâmetros ausentes: id e query são obrigatórios." });
   }
 
   const API_KEY = process.env.GOOGLE_API_KEY;
   const baseUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}`;
-  const busca = normalize(query);
-  const buscaDigits = soDigitos(busca);
+
+  // Define buscas principal e secundária
+  const buscaPrimaria = normalize(query_cpf || query || "");
+  const buscaSecundaria = normalize(query_nome || "");
+  const buscaPrimariaDigits = soDigitos(buscaPrimaria);
 
   const resultado = {
     spreadsheetId: id,
@@ -61,7 +65,6 @@ app.get("/sheets/fullscan", async (req, res) => {
 
     resultado.totalSheets = metaData.sheets.length;
 
-    // Percorre todas as abas
     for (const sheet of metaData.sheets) {
       const title = sheet.properties.title;
       const range = `${title}!A1:Z1000`;
@@ -78,7 +81,7 @@ app.get("/sheets/fullscan", async (req, res) => {
         }
 
         const linhas = valuesData.values;
-        const headers = linhas[1] || [];
+        const headers = (linhas[1] || []).filter((h) => h && String(h).trim() !== "");
         const colunas = headers.map((h) => normalize(h));
 
         // ------------------------------------------------------------
@@ -93,47 +96,71 @@ app.get("/sheets/fullscan", async (req, res) => {
             nome.includes("puerpera") ||
             nome.includes("hipertenso") ||
             nome.includes("diabetico") ||
-            nome.includes("cidadao")
+            nome.includes("cidadao") ||
+            nome.includes("criança") ||
+            nome.includes("idoso")
           )
           .map(({ indice }) => indice);
         // ------------------------------------------------------------
 
-        // 🧮 Filtragem linha a linha
         const matches = [];
 
-        for (let i = 2; i < linhas.length; i++) {
-          const linha = linhas[i];
-          if (!linha || linha.filter((x) => x && String(x).trim() !== "").length === 0) continue;
+        // 🧮 Primeira fase: busca por CPF/CNS
+        if (buscaPrimaria) {
+          for (let i = 2; i < linhas.length; i++) {
+            const linha = (linhas[i] || []).map((v) =>
+              v === null || v === undefined ? "" : String(v)
+            );
+            if (!linha || linha.filter((x) => x && String(x).trim() !== "").length === 0) continue;
 
-          const textoCompleto = linha.join(" ");
-          const cpfRaw = linha[colCpf] || "";
-          const nomesPossiveis = nomeColunas.map((idx) => linha[idx] || "").join(" ");
+            const textoCompleto = linha.join(" ");
+            const cpfRaw = linha[colCpf] || "";
+            const nomesPossiveis = nomeColunas.map((idx) => linha[idx] || "").join(" ");
 
-          const nomesNorm = normalize(nomesPossiveis);
-          const textoNorm = normalize(textoCompleto);
-          const cpfNorm = normalize(cpfRaw);
-          const cpfDigits = soDigitos(cpfNorm);
+            const textoNorm = normalize(textoCompleto);
+            const cpfNorm = normalize(cpfRaw);
+            const cpfDigits = soDigitos(cpfNorm);
 
-          // Regras de acerto:
-          // 1) Busca numérica (CPF/CNS) tolerante a zeros à esquerda e formatação variada
-          const hitCpf =
-            buscaDigits &&
-            cpfDigits &&
-            (cpfDigits.includes(buscaDigits) ||
-             buscaDigits.includes(cpfDigits) ||
-             textoNorm.includes(buscaDigits));
+            const hitCpf =
+              buscaPrimariaDigits &&
+              cpfDigits &&
+              (
+                cpfDigits.includes(buscaPrimariaDigits) ||
+                buscaPrimariaDigits.includes(cpfDigits) ||
+                // tolera zeros à esquerda ausentes
+                cpfDigits.replace(/^0+/, "").includes(buscaPrimariaDigits.replace(/^0+/, "")) ||
+                buscaPrimariaDigits.replace(/^0+/, "").includes(cpfDigits.replace(/^0+/, "")) ||
+                textoNorm.includes(buscaPrimariaDigits)
+              );
 
-          // 2) Busca textual por nome ou fragmento
-          const hitNome = !buscaDigits && nomesNorm.includes(busca);
-          const hitRow = !buscaDigits && textoNorm.includes(busca);
-
-          if (hitCpf || hitNome || hitRow) {
-            matches.push(linha);
-            if (matches.length >= 30) break; // proteção de volume
+            if (hitCpf) {
+              matches.push(linha);
+              if (matches.length >= 30) break;
+            }
           }
         }
 
-        // ------------------------------------------------------------
+        // 🧮 Segunda fase: fallback por nome (se nenhum match anterior)
+        if (matches.length === 0 && buscaSecundaria) {
+          for (let i = 2; i < linhas.length; i++) {
+            const linha = (linhas[i] || []).map((v) =>
+              v === null || v === undefined ? "" : String(v)
+            );
+            if (!linha || linha.filter((x) => x && String(x).trim() !== "").length === 0) continue;
+
+            const textoCompleto = linha.join(" ");
+            const nomesPossiveis = nomeColunas.map((idx) => linha[idx] || "").join(" ");
+
+            const nomesNorm = normalize(nomesPossiveis);
+            const textoNorm = normalize(textoCompleto);
+
+            if (nomesNorm.includes(buscaSecundaria) || textoNorm.includes(buscaSecundaria)) {
+              matches.push(linha);
+              if (matches.length >= 30) break;
+            }
+          }
+        }
+
         resultado.sheets.push({
           title,
           rows: linhas.length,
@@ -147,9 +174,9 @@ app.get("/sheets/fullscan", async (req, res) => {
           correspondencias: matches.length,
           colCpf: headers[colCpf] || "não encontrada",
           colNomeIndices: nomeColunas.map((i) => headers[i] || "não encontrada"),
-          buscaDigits,
+          buscaPrimaria,
+          buscaSecundaria,
         });
-        // ------------------------------------------------------------
 
       } catch (innerError) {
         resultado.debug.push({ title, erro: innerError.message });
@@ -166,7 +193,7 @@ app.get("/sheets/fullscan", async (req, res) => {
 });
 
 // ------------------------------------------------------------
-// 🚀 Inicialização do servidor
+// 🚀 Inicialização
 app.listen(PORT, () => {
   console.log(`Zenidon Proxy ativo na porta ${PORT}`);
 });
