@@ -1,7 +1,7 @@
 // ===============================
-// 🧩 ZENIDON PROXY – versão 2025-10-R9.1
+// 🧩 ZENIDON PROXY – versão 2025-10-R9.2
 // Proxy seguro para integração GPT ⇄ Google Sheets
-// ✅ Compatível com: CPFs truncados, zeros ausentes, tipos mistos e abas longas
+// ✅ Compatível com: CPFs truncados, espaços invisíveis do e-SUS, abas longas
 // ===============================
 
 import express from "express";
@@ -14,41 +14,43 @@ app.use(express.json());
 
 // ------------------------------------------------------------
 // 🧠 Funções auxiliares
+
+// Normalização completa (acentos, pontuação, espaços invisíveis, BOM, etc.)
 function normalize(text = "") {
   if (text === null || text === undefined) return "";
   return String(text)
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^\dA-Za-z\s]/g, "")
-    .replace(/\s+/g, " ")
+    .replace(/[\u0300-\u036f]/g, "")                   // remove acentos
+    .replace(/[\u200B-\u200D\uFEFF\u00A0\u202F]/g, "") // remove espaços invisíveis (e-SUS / HTML)
+    .replace(/[^\dA-Za-z\s]/g, "")                     // remove pontuação
+    .replace(/\s+/g, " ")                              // normaliza espaços múltiplos
     .trim()
     .toLowerCase();
 }
 
+// Extrai apenas dígitos
 function soDigitos(s = "") {
   return String(s).replace(/[^0-9]/g, "");
 }
 
+// Reconstrói zeros à esquerda e detecta CPFs cortados
 function ajustarCpf(raw = "") {
   const digits = soDigitos(raw);
-  if (!digits) return { cpf: "", truncado: false };
-  if (digits.length === 11) return { cpf: digits, truncado: false };
+  if (!digits) return { cpf: "", cortado: false };
+  if (digits.length === 11) return { cpf: digits, cortado: false };
   if (digits.length < 11 && digits.length >= 8) {
-    const corrigido = digits.padStart(11, "0");
-    return { cpf: corrigido, truncado: true };
+    return { cpf: digits.padStart(11, "0"), cortado: true };
   }
-  return { cpf: digits, truncado: false };
+  return { cpf: digits, cortado: false };
 }
-// ------------------------------------------------------------
 
+// ------------------------------------------------------------
 // ✅ Endpoint principal
 app.get("/sheets/fullscan", async (req, res) => {
   const { id, query, query_cpf, query_nome } = req.query;
 
   if (!id || (!query && !query_cpf && !query_nome)) {
-    return res
-      .status(400)
-      .json({ error: "Parâmetros ausentes: id e query são obrigatórios." });
+    return res.status(400).json({ error: "Parâmetros ausentes: id e query são obrigatórios." });
   }
 
   const API_KEY = process.env.GOOGLE_API_KEY;
@@ -58,28 +60,21 @@ app.get("/sheets/fullscan", async (req, res) => {
   const buscaSecundaria = normalize(query_nome || "");
   const buscaPrimariaDigits = soDigitos(buscaPrimaria);
 
-  const resultado = {
-    spreadsheetId: id,
-    totalSheets: 0,
-    sheets: [],
-    debug: [],
-  };
+  const resultado = { spreadsheetId: id, totalSheets: 0, sheets: [], debug: [] };
 
   try {
     const metaResponse = await fetch(`${baseUrl}?key=${API_KEY}`);
     const metaData = await metaResponse.json();
 
     if (!metaData.sheets) {
-      return res
-        .status(404)
-        .json({ error: "Planilha não encontrada ou sem abas acessíveis." });
+      return res.status(404).json({ error: "Planilha não encontrada ou sem abas acessíveis." });
     }
 
     resultado.totalSheets = metaData.sheets.length;
 
     for (const sheet of metaData.sheets) {
       const title = sheet.properties.title;
-      const range = `${title}!A:Z`; // ✅ Leitura ilimitada (todas as linhas)
+      const range = `${title}!A:Z`; // leitura ilimitada
 
       try {
         const valuesResponse = await fetch(
@@ -93,15 +88,10 @@ app.get("/sheets/fullscan", async (req, res) => {
         }
 
         const linhas = valuesData.values;
-        const headers = (linhas[1] || []).filter(
-          (h) => h && String(h).trim() !== ""
-        );
+        const headers = (linhas[1] || []).filter((h) => h && String(h).trim() !== "");
         const colunas = headers.map((h) => normalize(h));
 
-        const colCpf = colunas.findIndex(
-          (h) => h.includes("cpf") || h.includes("cns")
-        );
-
+        const colCpf = colunas.findIndex((h) => h.includes("cpf") || h.includes("cns"));
         const nomeColunas = colunas
           .map((h, i) => ({ nome: h, indice: i }))
           .filter(({ nome }) =>
@@ -117,20 +107,18 @@ app.get("/sheets/fullscan", async (req, res) => {
           .map(({ indice }) => indice);
 
         const matches = [];
-        let truncamentos = 0;
+        let cortados = 0;
 
         // ------------------------------------------------------------
         // 🧮 1ª fase — Busca por CPF/CNS (tolerante)
         if (buscaPrimariaDigits) {
           for (let i = 2; i < linhas.length; i++) {
-            const linha = (linhas[i] || []).map((v) =>
-              v === null || v === undefined ? "" : String(v)
-            );
+            const linha = (linhas[i] || []).map((v) => (v == null ? "" : String(v)));
             if (!linha.join("").trim()) continue;
 
             const cpfRaw = linha[colCpf] || "";
-            const { cpf: cpfCorrigido, truncado } = ajustarCpf(cpfRaw);
-            if (truncado) truncamentos++;
+            const { cpf: cpfCorrigido, cortado } = ajustarCpf(cpfRaw);
+            if (cortado) cortados++;
 
             const textoNorm = normalize(linha.join(" "));
             const cpfDigits = cpfCorrigido;
@@ -139,9 +127,7 @@ app.get("/sheets/fullscan", async (req, res) => {
               cpfDigits &&
               (cpfDigits.includes(buscaPrimariaDigits) ||
                 buscaPrimariaDigits.includes(cpfDigits) ||
-                cpfDigits.replace(/^0+/, "").includes(
-                  buscaPrimariaDigits.replace(/^0+/, "")
-                ) ||
+                cpfDigits.replace(/^0+/, "").includes(buscaPrimariaDigits.replace(/^0+/, "")) ||
                 buscaPrimariaDigits
                   .replace(/^0+/, "")
                   .includes(cpfDigits.replace(/^0+/, "")) ||
@@ -155,17 +141,13 @@ app.get("/sheets/fullscan", async (req, res) => {
         }
 
         // ------------------------------------------------------------
-        // 🧮 2ª fase — Fallback por nome (se nada encontrado)
+        // 🧮 2ª fase — Fallback por nome (limpeza profunda)
         if (matches.length === 0 && buscaSecundaria) {
           for (let i = 2; i < linhas.length; i++) {
-            const linha = (linhas[i] || []).map((v) =>
-              v === null || v === undefined ? "" : String(v)
-            );
+            const linha = (linhas[i] || []).map((v) => (v == null ? "" : String(v)));
             if (!linha.join("").trim()) continue;
 
-            const nomesPossiveis = nomeColunas
-              .map((idx) => linha[idx] || "")
-              .join(" ");
+            const nomesPossiveis = nomeColunas.map((idx) => linha[idx] || "").join(" ");
             const nomesNorm = normalize(nomesPossiveis);
             const textoNorm = normalize(linha.join(" "));
 
@@ -179,18 +161,12 @@ app.get("/sheets/fullscan", async (req, res) => {
           }
         }
 
-        resultado.sheets.push({
-          title,
-          rows: linhas.length,
-          headers,
-          matches,
-        });
-
+        resultado.sheets.push({ title, rows: linhas.length, headers, matches });
         resultado.debug.push({
           title,
           linhasLidas: linhas.length,
           correspondencias: matches.length,
-          truncamentosDetectados: truncamentos,
+          cpfsCortadosDetectados: cortados,
           colCpf: headers[colCpf] || "não encontrada",
           colNomeIndices: nomeColunas.map((i) => headers[i] || "não encontrada"),
           buscaPrimaria,
@@ -213,5 +189,5 @@ app.get("/sheets/fullscan", async (req, res) => {
 // ------------------------------------------------------------
 // 🚀 Inicialização
 app.listen(PORT, () => {
-  console.log(`Zenidon Proxy R9.1 ativo na porta ${PORT}`);
+  console.log(`Zenidon Proxy R9.2 ativo na porta ${PORT}`);
 });
